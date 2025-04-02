@@ -14,10 +14,10 @@ app.get("/get-contacts", async (req, res) => {
     // Fetch contacts
     const allContacts = [];
     let currentPage = 1;
-    let hasMore = false;
+    let hasMore = true;
 
-    // Fetch contacts with pagination
-    while (hasMore) {
+    // Fetch only the first 100 contacts
+    while (hasMore && allContacts.length < 100) {
       const response = await axios.get(
         `${GHL_CONTACTS_URL}?page=${currentPage}&limit=100`,
         {
@@ -32,8 +32,13 @@ app.get("/get-contacts", async (req, res) => {
         response.data?.contacts || response.data?.data?.contacts || [];
       allContacts.push(...contacts);
 
-      hasMore = contacts.length === 100;
-      currentPage++;
+      if (allContacts.length >= 100) {
+        hasMore = false; // Stop pagination once we have 100 contacts
+      } else {
+        currentPage++;
+      }
+
+      // Delay the next request slightly to avoid hitting rate limits
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
 
@@ -41,7 +46,9 @@ app.get("/get-contacts", async (req, res) => {
     const customFieldsResponse = await axios.get(GHL_CUSTOM_FIELDS_URL, {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
+
     console.log(allContacts, "allContacts");
+
     const contacts = allContacts || [];
     const customFieldsData = customFieldsResponse.data?.customFields || [];
 
@@ -107,7 +114,7 @@ app.get("/get-contacts", async (req, res) => {
 
     res.json({
       success: true,
-      count: formattedContacts?.length,
+      count: formattedContacts.length,
       data: formattedContacts,
     });
   } catch (error) {
