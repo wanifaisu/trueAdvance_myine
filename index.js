@@ -14,7 +14,7 @@ app.get("/get-contacts", async (req, res) => {
     // Fetch contacts
     const allContacts = [];
     let currentPage = 1;
-    let hasMore = true;
+    let hasMore = false;
 
     // Fetch contacts with pagination
     while (hasMore) {
