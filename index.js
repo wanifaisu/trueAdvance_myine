@@ -15,7 +15,7 @@ const GHL_CUSTOM_FIELDS_URL = "https://rest.gohighlevel.com/v1/custom-fields/";
 
 app.get("/get-contacts", async (req, res) => {
   try {
-    // Fetch contacts (your existing code)
+    // Fetch contacts
     const allContacts = [];
     let currentPage = 1;
     let hasMore = true;
@@ -40,7 +40,7 @@ app.get("/get-contacts", async (req, res) => {
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
 
-    // Fetch all custom fields (your existing code)
+    // Fetch all custom fields
     const customFieldsResponse = await axios.get(GHL_CUSTOM_FIELDS_URL, {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
@@ -63,7 +63,6 @@ app.get("/get-contacts", async (req, res) => {
     });
 
     const formattedContacts = contacts.map((contact) => {
-      // Your existing contact formatting code
       let structuredCustomFields = {};
       let owners = [{}, {}];
 
@@ -109,13 +108,17 @@ app.get("/get-contacts", async (req, res) => {
     // Get transaction data
     const transactionData = await getAllTransactions();
 
-    // Group transactions by matching email
+    // Group transactions by matching MySQL User-Email
     const emailTransactionMap = {};
 
     formattedContacts.forEach((contact) => {
       const businessLegalName =
         contact.customFields?.General?.["Business Legal Name"];
-      if (!businessLegalName || contact.email === "N/A") return;
+      const mySQLUserEmail =
+        contact.customFields?.General?.["MySQL User-Email"] || contact.email;
+
+      if (!businessLegalName || !mySQLUserEmail || mySQLUserEmail === "N/A")
+        return;
 
       // Find matching transactions for this contact
       const matchingTransactions = transactionData.filter((transaction) =>
@@ -125,18 +128,20 @@ app.get("/get-contacts", async (req, res) => {
       );
 
       if (matchingTransactions.length > 0) {
-        if (!emailTransactionMap[contact.email]) {
-          emailTransactionMap[contact.email] = {
+        if (!emailTransactionMap[mySQLUserEmail]) {
+          emailTransactionMap[mySQLUserEmail] = {
             contactInfo: {
               name: contact.name,
-              email: contact.email,
+              email: mySQLUserEmail,
+              originalContactEmail: contact.email,
               phone: contact.phone,
               businessLegalName,
+              mySQLUserName: contact.customFields?.General?.["MySQL-User-Name"],
             },
             transactions: [],
           };
         }
-        emailTransactionMap[contact.email].transactions.push(
+        emailTransactionMap[mySQLUserEmail].transactions.push(
           ...matchingTransactions
         );
       }
@@ -145,8 +150,10 @@ app.get("/get-contacts", async (req, res) => {
     // Convert to array format
     const result = Object.values(emailTransactionMap).map((item) => ({
       email: item.contactInfo.email,
+      originalContactEmail: item.contactInfo.originalContactEmail,
       contactName: item.contactInfo.name,
       businessName: item.contactInfo.businessLegalName,
+      mySQLUserName: item.contactInfo.mySQLUserName,
       transactions: item.transactions.map((t) => ({
         id: t.id,
         merchant: t.merchant_name,
@@ -173,23 +180,16 @@ app.get("/get-contacts", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
 const getAllTransactions = async () => {
   try {
     const [rows] = await db.query("SELECT * FROM transactions");
     return rows;
   } catch (err) {
-    // Re-throw the error for the caller to handle
     throw new Error(`Failed to fetch transactions: ${err.message}`);
   }
 };
-// app.get("/transactions", async (req, res) => {
-//   try {
-//     const [rows] = await db.query("SELECT * FROM transactions");
-//     res.json(rows);
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
