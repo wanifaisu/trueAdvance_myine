@@ -116,7 +116,7 @@ app.get("/get-contacts", async (req, res) => {
         contact.customFields?.General?.["Business Legal Name"];
       const mySQLUserEmail =
         contact.customFields?.General?.["MySQL User-Email"] || contact.email;
-
+      const mySQLUserName = contact.customFields?.General?.["MySQL-User-Name"];
       if (!businessLegalName || !mySQLUserEmail || mySQLUserEmail === "N/A")
         return;
 
@@ -131,7 +131,7 @@ app.get("/get-contacts", async (req, res) => {
         if (!emailTransactionMap[mySQLUserEmail]) {
           emailTransactionMap[mySQLUserEmail] = {
             contactInfo: {
-              name: contact.name,
+              name: mySQLUserName,
               email: mySQLUserEmail,
               originalContactEmail: contact.email,
               phone: contact.phone,
