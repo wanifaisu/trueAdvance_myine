@@ -1,8 +1,12 @@
 const express = require("express");
-const axios = require("axios");
-require("dotenv").config();
+const bodyParser = require("body-parser");
+const cors = require("cors");
+const db = require("./db");
+const { default: axios } = require("axios");
 
 const app = express();
+app.use(cors());
+app.use(bodyParser.json());
 const PORT = process.env.PORT || 5000;
 
 const API_KEY = process.env.GHL_API_KEY;
@@ -11,13 +15,12 @@ const GHL_CUSTOM_FIELDS_URL = "https://rest.gohighlevel.com/v1/custom-fields/";
 
 app.get("/get-contacts", async (req, res) => {
   try {
-    // Fetch contacts
+    // Fetch contacts (your existing code)
     const allContacts = [];
     let currentPage = 1;
     let hasMore = true;
 
-    // Fetch only the first 100 contacts
-    while (hasMore && allContacts.length < 100) {
+    while (hasMore) {
       const response = await axios.get(
         `${GHL_CONTACTS_URL}?page=${currentPage}&limit=100`,
         {
@@ -32,23 +35,15 @@ app.get("/get-contacts", async (req, res) => {
         response.data?.contacts || response.data?.data?.contacts || [];
       allContacts.push(...contacts);
 
-      if (allContacts.length >= 100) {
-        hasMore = false; // Stop pagination once we have 100 contacts
-      } else {
-        currentPage++;
-      }
-
-      // Delay the next request slightly to avoid hitting rate limits
+      hasMore = contacts.length === 100;
+      currentPage++;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
 
-    // Fetch all custom fields
+    // Fetch all custom fields (your existing code)
     const customFieldsResponse = await axios.get(GHL_CUSTOM_FIELDS_URL, {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
-
-    console.log(allContacts, "allContacts");
-
     const contacts = allContacts || [];
     const customFieldsData = customFieldsResponse.data?.customFields || [];
 
@@ -60,7 +55,6 @@ app.get("/get-contacts", async (req, res) => {
 
     const customFieldsMap = {};
 
-    // Map custom field IDs to names and groups
     customFieldsData.forEach((field) => {
       customFieldsMap[field.id] = {
         name: field.name,
@@ -69,8 +63,9 @@ app.get("/get-contacts", async (req, res) => {
     });
 
     const formattedContacts = contacts.map((contact) => {
+      // Your existing contact formatting code
       let structuredCustomFields = {};
-      let owners = [{}, {}]; // Array to store 1st and 2nd owner objects
+      let owners = [{}, {}];
 
       if (contact.customField && Array.isArray(contact.customField)) {
         contact.customField.forEach((field) => {
@@ -83,21 +78,20 @@ app.get("/get-contacts", async (req, res) => {
 
             if (name.startsWith("1st Owner")) {
               const ownerField = name.replace("1st Owner ", "");
-              owners[0][ownerField] = field.value; // Store in first owner object
+              owners[0][ownerField] = field.value;
             } else if (
               name.startsWith("2nd Owner") ||
               name.startsWith("2nd-Owner")
             ) {
-              const ownerField = name.replace(/2nd(-|\s)Owner /, ""); // Handle different formats
-              owners[1][ownerField] = field.value; // Store in second owner object
+              const ownerField = name.replace(/2nd(-|\s)Owner /, "");
+              owners[1][ownerField] = field.value;
             } else {
-              structuredCustomFields[group][name] = field.value; // Store other custom fields
+              structuredCustomFields[group][name] = field.value;
             }
           }
         });
       }
 
-      // Remove empty owner objects
       owners = owners.filter((owner) => Object.keys(owner).length > 0);
 
       return {
@@ -108,21 +102,94 @@ app.get("/get-contacts", async (req, res) => {
         email: contact.email || "N/A",
         phone: contact.phone || "N/A",
         customFields: structuredCustomFields,
-        owners, // Store owners as an array
+        owners,
       };
     });
 
+    // Get transaction data
+    const transactionData = await getAllTransactions();
+
+    // Group transactions by matching email
+    const emailTransactionMap = {};
+
+    formattedContacts.forEach((contact) => {
+      const businessLegalName =
+        contact.customFields?.General?.["Business Legal Name"];
+      if (!businessLegalName || contact.email === "N/A") return;
+
+      // Find matching transactions for this contact
+      const matchingTransactions = transactionData.filter((transaction) =>
+        businessLegalName
+          .toLowerCase()
+          .includes(transaction.merchant_name.toLowerCase())
+      );
+
+      if (matchingTransactions.length > 0) {
+        if (!emailTransactionMap[contact.email]) {
+          emailTransactionMap[contact.email] = {
+            contactInfo: {
+              name: contact.name,
+              email: contact.email,
+              phone: contact.phone,
+              businessLegalName,
+            },
+            transactions: [],
+          };
+        }
+        emailTransactionMap[contact.email].transactions.push(
+          ...matchingTransactions
+        );
+      }
+    });
+
+    // Convert to array format
+    const result = Object.values(emailTransactionMap).map((item) => ({
+      email: item.contactInfo.email,
+      contactName: item.contactInfo.name,
+      businessName: item.contactInfo.businessLegalName,
+      transactions: item.transactions.map((t) => ({
+        id: t.id,
+        merchant: t.merchant_name,
+        amount: t.amount,
+        date: t.originate_date,
+        status: t.current_status,
+        transactionId: t.transaction_id,
+        notes: t.notes,
+      })),
+      totalTransactions: item.transactions.length,
+      totalAmount: item.transactions.reduce(
+        (sum, t) => sum + parseFloat(t.amount),
+        0
+      ),
+    }));
+
     res.json({
       success: true,
-      count: formattedContacts.length,
-      data: formattedContacts,
+      count: result.length,
+      data: result,
     });
   } catch (error) {
     console.error("Error:", error.response?.data || error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
+const getAllTransactions = async () => {
+  try {
+    const [rows] = await db.query("SELECT * FROM transactions");
+    return rows;
+  } catch (err) {
+    // Re-throw the error for the caller to handle
+    throw new Error(`Failed to fetch transactions: ${err.message}`);
+  }
+};
+// app.get("/transactions", async (req, res) => {
+//   try {
+//     const [rows] = await db.query("SELECT * FROM transactions");
+//     res.json(rows);
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
